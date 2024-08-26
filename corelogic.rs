@@ -387,16 +387,31 @@ fn calculate_health_factor(user_account: &UserAccount, state: &State, new_debt: 
         .ok_or(ErrorCode::MathOverflow)?)
 }
 
-fn calculate_health_factor_with_collateral(user_account: &UserAccount, state: &State, new_collateral: u64, oracle: &AccountInfo) -> Result<u64> {
-    if user_account.debt_amount == 0 {
-        return Ok(u64::MAX);
+fn calculate_health_factor(
+    user_account: &UserAccount,
+    state: &State,
+    new_debt: u64,
+    oracle: &AccountInfo,
+) -> Result<u64> {
+    let price_feed = load_price_feed_from_account_info(oracle)?;
+    let price = price_feed.get_current_price().ok_or(ErrorCode::OracleError)?;
+    let total_debt = user_account.debt_amount.checked_add(new_debt).ok_or(ErrorCode::MathOverflow)?;
+    
+    if total_debt == 0 {
+        return Ok(u64::MAX); // Max health factor if there's no debt
     }
-    let collateral_value = get_collateral_value(new_collateral, oracle)?;
-    Ok(collateral_value
-        .checked_mul(10000)
+
+    let collateral_value = user_account.collateral_amount
+        .checked_mul(price)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let health_factor = collateral_value
+        .checked_mul(100)
         .ok_or(ErrorCode::MathOverflow)?
-        .checked_div(user_account.debt_amount.checked_mul(state.liquidation_threshold).ok_or(ErrorCode::MathOverflow)?)
-        .ok_or(ErrorCode::MathOverflow)?)
+        .checked_div(total_debt)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    Ok(health_factor)
 }
 
 fn get_collateral_value(collateral_amount: u64, oracle: &AccountInfo) -> Result<u64> {
